@@ -1,5 +1,6 @@
 ﻿using Sandbox.Game;
 using Sandbox.Game.Entities;
+using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using System;
 using System.Collections.Concurrent;
@@ -74,11 +75,13 @@ namespace BeaconLimits
         public void GetAllBeaconSubtypes()
         {
             beaconSubtypes.Clear();
-            foreach(var subtypes in config._beaconSubtypes)
+            foreach (var group in config._beaconGroups)
             {
-                beaconSubtypes.Add(subtypes.subtype);
+                foreach (var subtype in group.BeaconSubtypes)
+                {
+                    beaconSubtypes.Add(subtype);
+                }
             }
-                
         }
 
         public override void UpdateBeforeSimulation()
@@ -177,45 +180,31 @@ namespace BeaconLimits
                     }
                 }
 
-                foreach (var beaconType in data.totalBeaconTypes.Keys)
+                //UNDONE: BeaconData.AddBeaconSubtype should probably select the appropriate group, but without that, we need to go through and get total counts for each group before proceeding
+                var groupBeaconCounts = data.GetGroupedBeaconCounts();
+
+                foreach (var beaconGroupName in groupBeaconCounts.Keys)
                 {
-                    foreach (var configType in config._beaconSubtypes)
+                    var beaconGroup = config._beaconGroups.FirstOrDefault(x => x.GroupName == beaconGroupName);
+                    if(beaconGroup == null) continue; // Shouldn't happen, but just in case
+
+                    int limit = beaconGroup.GetLimitByFaction(faction);
+                    if (groupBeaconCounts[beaconGroupName] > limit)
                     {
-                        if (configType.subtype == beaconType)
+                        factionOverLimits = true;
+                        if (faction != null)
                         {
-                            int limit = 0;
-                            if (faction != null)
-                            {
-                                if (faction.Members.Count >= configType.limit.Length)
-                                    limit = configType.limit.Last();
-                                else
-                                    limit = configType.limit[faction.Members.Count - 1];
-
-                                if (data.totalBeaconTypes[beaconType].Count > limit)
-                                {
-                                    factionOverLimits = true;
-                                    if (factionAlerts.ContainsKey(data.factionId)) break;
-                                    factionAlerts.TryAdd(data.factionId, 0);
-                                    MyVisualScriptLogicProvider.SendChatMessageColored($"Faction '{faction.Name}' is over the {limit} beacon limit for {beaconType}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                limit = configType.limit.First();
-                                if (data.totalBeaconTypes[beaconType].Count > limit)
-                                {
-                                    factionOverLimits = true;
-                                    if (playerAlerts.ContainsKey(data.ownerId)) break;
-                                    playerAlerts.TryAdd(data.ownerId, 0);
-                                    string playerName;
-                                    allPlayers.TryGetValue(data.ownerId, out playerName);
-                                    MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {limit} beacon limit for {beaconType}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
-                                    break;
-                                }
-                            }
-
-                            break;
+                            if (factionAlerts.ContainsKey(data.factionId)) break;
+                            factionAlerts.TryAdd(data.factionId, 0);
+                            MyVisualScriptLogicProvider.SendChatMessageColored($"Faction '{faction.Name}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
+                        }
+                        else
+                        {
+                            if (playerAlerts.ContainsKey(data.ownerId)) break;
+                            playerAlerts.TryAdd(data.ownerId, 0);
+                            string playerName;
+                            allPlayers.TryGetValue(data.ownerId, out playerName);
+                            MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
                         }
                     }
 
@@ -271,31 +260,23 @@ namespace BeaconLimits
                     if (data == null) continue;
 
                     if (config._useMaxBeacons && data.totalBeacons > MAX_BEACONS)
-                        MyVisualScriptLogicProvider.SendChatMessageColored($"Faction '{faction.Name}' is over the {MAX_BEACONS} beacon limit. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
+                        MyVisualScriptLogicProvider.SendChatMessageColored($"Reminder: Faction '{faction.Name}' is over the {MAX_BEACONS} beacon limit. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
 
-                    foreach (var beaconType in data.totalBeaconTypes.Keys)
+                    var groupBeaconCounts = data.GetGroupedBeaconCounts();
+                    foreach (var beaconGroupName in groupBeaconCounts.Keys)
                     {
-                        foreach (var configType in config._beaconSubtypes)
+                        var beaconGroup = config._beaconGroups.FirstOrDefault(x => x.GroupName == beaconGroupName);
+                        if (beaconGroup == null) continue; // Shouldn't happen, but just in case
+
+                        int limit = beaconGroup.GetLimitByFaction(faction);
+                        if (groupBeaconCounts[beaconGroupName] > limit)
                         {
-                            if (configType.subtype == beaconType)
-                            {
-                                int limit = 0;
-                                if (faction.Members.Count >= configType.limit.Length)
-                                    limit = configType.limit.Last();
-                                else
-                                    limit = configType.limit[faction.Members.Count - 1];
-
-                                if (data.totalBeaconTypes[beaconType].Count > limit)
-                                {
-                                    MyVisualScriptLogicProvider.SendChatMessageColored($"Faction '{faction.Name}' is over the {limit} beacon limit for {beaconType}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
-                                    break;
-                                }
-
-                                break;
-                            }
+                            MyVisualScriptLogicProvider.SendChatMessageColored($"Reminder: Faction '{faction.Name}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
+                            break;
                         }
+
                     }
- 
+
                     factionAlerts[key] = 0;
                     continue;
                 }
@@ -310,6 +291,7 @@ namespace BeaconLimits
                     var data = beaconCache.FindDataFromOwnerId(key);
                     if (data == null) continue;
 
+                    var groupBeaconCounts = data.GetGroupedBeaconCounts();
                     if (config._useMaxBeacons && data.totalBeacons > MAX_BEACONS)
                     {
                         string playerName;
@@ -317,27 +299,20 @@ namespace BeaconLimits
                         MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {MAX_BEACONS} beacon limit. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
                     }
 
-                    foreach (var beaconType in data.totalBeaconTypes.Keys)
+                    foreach (var beaconGroupName in groupBeaconCounts.Keys)
                     {
-                        foreach (var configType in config._beaconSubtypes)
-                        {
-                            if (configType.subtype == beaconType)
-                            {
-                                int limit = 0;
-                                {
-                                    limit = configType.limit.First();
-                                    if (data.totalBeaconTypes[beaconType].Count > limit)
-                                    {
-                                        string playerName;
-                                        allPlayers.TryGetValue(data.ownerId, out playerName);
-                                        MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {limit} beacon limit for {beaconType}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
-                                        break;
-                                    }
-                                }
+                        var beaconGroup = config._beaconGroups.FirstOrDefault(x => x.GroupName == beaconGroupName);
+                        if (beaconGroup == null) continue; // Shouldn't happen, but just in case
 
-                                break;
-                            }
+                        int limit = beaconGroup.GetLimitByFaction(null);
+                        if (groupBeaconCounts[beaconGroupName] > limit)
+                        {
+                            string playerName;
+                            allPlayers.TryGetValue(data.ownerId, out playerName);
+                            MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
+                            break;
                         }
+
                     }
 
                     playerAlerts[key] = 0;

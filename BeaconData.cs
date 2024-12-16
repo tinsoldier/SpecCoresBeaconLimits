@@ -1,5 +1,7 @@
 ﻿using ProtoBuf;
+using Sandbox.Engine.Utils;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace BeaconLimits
 {
@@ -137,6 +139,28 @@ namespace BeaconLimits
             }
 
             return null;
+        }
+
+        public Dictionary<string, int> GetGroupedBeaconCounts()
+        {
+            Dictionary<string, int> groupBeaconCounts = new Dictionary<string, int>();
+            foreach (var beaconType in totalBeaconTypes.Keys)
+            {
+                List<Config.BeaconGroup> relevantGroups = Session.Instance.config._beaconGroups.Where(x => x.BeaconSubtypes.Contains(beaconType)).ToList();
+
+                foreach (var group in relevantGroups)
+                {
+                    if (groupBeaconCounts.ContainsKey(group.GroupName))
+                    {
+                        groupBeaconCounts[group.GroupName] += totalBeaconTypes[beaconType].Count;
+                    }
+                    else
+                    {
+                        groupBeaconCounts.Add(group.GroupName, totalBeaconTypes[beaconType].Count);
+                    }
+                }
+            }
+            return groupBeaconCounts;
         }
     }
 

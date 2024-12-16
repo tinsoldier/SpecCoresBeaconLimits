@@ -111,14 +111,17 @@ namespace BeaconLimits
 
                     IMyFaction myFaction = MyAPIGateway.Session.Factions.TryGetPlayerFaction(MyAPIGateway.Session.LocalHumanPlayer.IdentityId);
                     int index = 0;
-                    string message = "Index | Grid Name | Beacon Subtype | # Beacon Subtype On Grid\n ------------------------------------------------\n\n";
+                    string message = "Index | Grid Name | Subtype | Group | # Beacon Subtype On Grid\n ------------------------------------------------\n\n";
                     foreach (var faction in encasedData.factionData.beaconData)
                     {
                         message += $" {index} {faction.gridName} - ";
                         if (faction.beacons.Keys.Count <= 1)
                         {
                             foreach (var beaconType in faction.beacons.Keys)
-                                message += $"{beaconType} - {faction.beacons[beaconType].Count}\n";
+                            {
+                                var groupType = Session.Instance.config.GetGroupBySubtype(beaconType);
+                                message += $"{beaconType} - {groupType} - {faction.beacons[beaconType].Count}\n";
+                            }
                         }
                         else
                         {
@@ -138,25 +141,21 @@ namespace BeaconLimits
                         index++;
                     }
                     
+                    var groupedBeaconCounts = encasedData.factionData.GetGroupedBeaconCounts();
+
                     message += $"\n\n Beacon Subtypes/Totals:\n";
-                    foreach (var types in Session.Instance.config._beaconSubtypes)
+                    foreach (var beaconGroup in Session.Instance.config._beaconGroups)
                     {
-                        int limit = 0;
-                        if (myFaction != null)
-                        {
-                            if (myFaction.Members.Count >= types.limit.Length)
-                                limit = types.limit.Last();
-                            else
-                                limit = types.limit[myFaction.Members.Count - 1];
-                        }else
-                            limit = types.limit.First();
+                        int limit = beaconGroup.GetLimitByFaction(myFaction);
 
                         List<long> list = new List<long>();
-                        encasedData.factionData.totalBeaconTypes.TryGetValue(types.subtype, out list);
-                        if (list == null)
-                            list = new List<long>();
+                        encasedData.factionData.totalBeaconTypes.TryGetValue(beaconGroup.GroupName, out list);
+                        int count;
+                        groupedBeaconCounts.TryGetValue(beaconGroup.GroupName, out count);
+                        //if (list == null)
+                        //    list = new List<long>();
 
-                        message += $" {types.subtype} = {list.Count}/{limit}\n";
+                        message += $" {beaconGroup.GroupName} = {count}/{limit}\n";
                     }
 
                     if (Session.Instance.config._useMaxBeacons)
@@ -236,27 +235,18 @@ namespace BeaconLimits
 
                         message += $"\n Beacon Subtype Totals:\n";
 
-                        foreach (var types in Session.Instance.config._beaconSubtypes)
+                        foreach (var beaconGroup in Session.Instance.config._beaconGroups)
                         {
-                            int limit = 0;
-                            if (myFaction != null)
-                            {
-                                if (myFaction.Members.Count >= types.limit.Length)
-                                    limit = types.limit.Last();
-                                else
-                                    limit = types.limit[myFaction.Members.Count - 1];
-                            }
-                            else
-                                limit = types.limit.First();
+                            int limit = beaconGroup.GetLimitByFaction(myFaction);
 
                             List<long> list = new List<long>();
-                            faction.totalBeaconTypes.TryGetValue(types.subtype, out list);
+                            encasedData.factionData.totalBeaconTypes.TryGetValue(beaconGroup.GroupName, out list);
                             if (list == null)
                                 list = new List<long>();
 
-                            message += $" {types.subtype} - {list.Count}/{limit}\n";
+                            message += $" {beaconGroup.GroupName} = {list.Count}/{limit}\n";
                         }
-                            
+
                         if (Session.Instance.config._useMaxBeacons)
                             message += $"\n Total Beacons = {faction.totalBeacons}/{Session.Instance.MAX_BEACONS}\n\n";
                     }
@@ -306,14 +296,14 @@ namespace BeaconLimits
 
                     Session.Instance.config = encasedData.config;
 
-                    List<BeaconSubtype> temp = new List<BeaconSubtype>();
-                    for (int i = Session.Instance.config._beaconSubtypes.Length - 1; i >= 0; i--)
+                    List<BeaconGroup> temp = new List<BeaconGroup>();
+                    for (int i = Session.Instance.config._beaconGroups.Count - 1; i >= 0; i--)
                     {
-                        if (Session.Instance.config._beaconSubtypes[i].subtype != "Name")
-                            temp.Add(Session.Instance.config._beaconSubtypes[i]);
+                        if (Session.Instance.config._beaconGroups[i].GroupName != "Name")
+                            temp.Add(Session.Instance.config._beaconGroups[i]);
                     }
 
-                    Session.Instance.config._beaconSubtypes = temp.ToArray();
+                    Session.Instance.config._beaconGroups = temp.ToList();
                     Session.Instance.UPDATE_RATE = encasedData.config._updateRate;
                     Session.Instance.ALERT_RATE = encasedData.config._alertRate;
                     Session.Instance.MAX_BEACONS = encasedData.config._maxBeacons;
