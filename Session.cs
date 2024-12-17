@@ -22,6 +22,12 @@ namespace BeaconLimits
         public int ALERT_RATE = 300; // how often to spam chat alerts in seconds
         public int MAX_BEACONS = 25; // beacons per faction, if player not in faction then per player
 
+        public class FactionAlert
+        {
+            public long FactionId;
+            public int SecondsSinceLastAlert;
+            public List<string> BlockGroupViolations = new List<string>();
+        }
 
         public static Session Instance;
         private int ticks;
@@ -31,7 +37,7 @@ namespace BeaconLimits
         public Config config;
         public List<IMyBeacon> beacons = new List<IMyBeacon>();
         public BeaconList beaconCache = new BeaconList();
-        public ConcurrentDictionary<long, int> factionAlerts = new ConcurrentDictionary<long, int>();
+        public ConcurrentDictionary<long, FactionAlert> factionAlerts = new ConcurrentDictionary<long, FactionAlert>();
         public ConcurrentDictionary<long, int> playerAlerts = new ConcurrentDictionary<long, int>();
         public Dictionary<long, string> allPlayers = new Dictionary<long, string>();
         public List<string> beaconSubtypes = new List<string>();
@@ -41,9 +47,9 @@ namespace BeaconLimits
         {
             isServer = MyAPIGateway.Session.IsServer;
             isDedicated = MyAPIGateway.Utilities.IsDedicated;
-            
             if (isServer)
             {
+
                 config = Config.LoadConfig();
 
                 if (config != null)
@@ -164,7 +170,11 @@ namespace BeaconLimits
                     {
                         factionOverLimits = true;
                         if (factionAlerts.ContainsKey(data.factionId)) continue;
-                        factionAlerts.TryAdd(data.factionId, 0);
+                        factionAlerts.TryAdd(data.factionId, new FactionAlert()
+                        {
+                            FactionId = data.factionId,
+                            SecondsSinceLastAlert = 0
+                        });
                         MyVisualScriptLogicProvider.SendChatMessageColored($"Faction '{faction.Name}' is over the {MAX_BEACONS} beacon limit. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
 
                     }
@@ -182,7 +192,6 @@ namespace BeaconLimits
 
                 //UNDONE: BeaconData.AddBeaconSubtype should probably select the appropriate group, but without that, we need to go through and get total counts for each group before proceeding
                 var groupBeaconCounts = data.GetGroupedBeaconCounts();
-
                 foreach (var beaconGroupName in groupBeaconCounts.Keys)
                 {
                     var beaconGroup = config._beaconGroups.FirstOrDefault(x => x.GroupName == beaconGroupName);
@@ -194,21 +203,34 @@ namespace BeaconLimits
                         factionOverLimits = true;
                         if (faction != null)
                         {
-                            if (factionAlerts.ContainsKey(data.factionId)) break;
-                            factionAlerts.TryAdd(data.factionId, 0);
+                            //if (factionAlerts.ContainsKey(data.factionId)) continue;
+                            //factionAlerts.TryAdd(data.factionId, 0);
+                            FactionAlert factionAlert;
+                            if (factionAlerts.TryGetValue(data.factionId, out factionAlert))
+                            {
+                                if(factionAlert.BlockGroupViolations.Contains(beaconGroupName)) continue;
+                            }
+                            else
+                            {
+                                factionAlert = new FactionAlert()
+                                {
+                                    FactionId = data.factionId,
+                                    SecondsSinceLastAlert = 0
+                                };
+                                factionAlerts.TryAdd(data.factionId, factionAlert);
+                            }
+                            factionAlert.BlockGroupViolations.Add(beaconGroupName);
                             MyVisualScriptLogicProvider.SendChatMessageColored($"Faction '{faction.Name}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
                         }
                         else
                         {
-                            if (playerAlerts.ContainsKey(data.ownerId)) break;
+                            if (playerAlerts.ContainsKey(data.ownerId)) continue;
                             playerAlerts.TryAdd(data.ownerId, 0);
                             string playerName;
-                            allPlayers.TryGetValue(data.ownerId, out playerName);
-                            MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
+                            if(allPlayers.TryGetValue(data.ownerId, out playerName))
+                                MyVisualScriptLogicProvider.SendChatMessageColored($"Player '{playerName}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
                         }
                     }
-
-                    if (factionOverLimits) break;
                 }
 
                 if (!factionOverLimits)
@@ -231,8 +253,8 @@ namespace BeaconLimits
                 IMyFaction myFaction = MyAPIGateway.Session.Factions.TryGetFactionById(faction.Key);
                 if (myFaction != null) continue;
 
-                int value;
-                factionAlerts.TryRemove(faction.Key, out value);
+                FactionAlert factionAlert;
+                factionAlerts.TryRemove(faction.Key, out factionAlert);
             }
 
             foreach (var player in playerAlerts)
@@ -251,37 +273,33 @@ namespace BeaconLimits
 
             foreach (var key in factionAlerts.Keys)
             {
-                if (factionAlerts[key] >= ALERT_RATE)
+                FactionAlert factionAlert = factionAlerts[key];
+                if (factionAlert.SecondsSinceLastAlert++ <= ALERT_RATE) continue;
+
+                IMyFaction faction = MyAPIGateway.Session.Factions.TryGetFactionById(key);
+                if (faction == null) continue;
+
+                var data = beaconCache.FindDataFromFactionId(key);
+                if (data == null) continue;
+
+                if (config._useMaxBeacons && data.totalBeacons > MAX_BEACONS)
+                    MyVisualScriptLogicProvider.SendChatMessageColored($"Reminder: Faction '{faction.Name}' is over the {MAX_BEACONS} beacon limit. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
+
+                var groupBeaconCounts = data.GetGroupedBeaconCounts();
+                foreach (var beaconGroupName in groupBeaconCounts.Keys)
                 {
-                    IMyFaction faction = MyAPIGateway.Session.Factions.TryGetFactionById(key);
-                    if (faction == null) continue;
+                    var beaconGroup = config._beaconGroups.FirstOrDefault(x => x.GroupName == beaconGroupName);
+                    if (beaconGroup == null) continue; // Shouldn't happen, but just in case
 
-                    var data = beaconCache.FindDataFromFactionId(key);
-                    if (data == null) continue;
-
-                    if (config._useMaxBeacons && data.totalBeacons > MAX_BEACONS)
-                        MyVisualScriptLogicProvider.SendChatMessageColored($"Reminder: Faction '{faction.Name}' is over the {MAX_BEACONS} beacon limit. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
-
-                    var groupBeaconCounts = data.GetGroupedBeaconCounts();
-                    foreach (var beaconGroupName in groupBeaconCounts.Keys)
+                    int limit = beaconGroup.GetLimitByFaction(faction);
+                    if (groupBeaconCounts[beaconGroupName] > limit)
                     {
-                        var beaconGroup = config._beaconGroups.FirstOrDefault(x => x.GroupName == beaconGroupName);
-                        if (beaconGroup == null) continue; // Shouldn't happen, but just in case
-
-                        int limit = beaconGroup.GetLimitByFaction(faction);
-                        if (groupBeaconCounts[beaconGroupName] > limit)
-                        {
-                            MyVisualScriptLogicProvider.SendChatMessageColored($"Reminder: Faction '{faction.Name}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
-                            break;
-                        }
-
+                        MyVisualScriptLogicProvider.SendChatMessageColored($"Reminder: Faction '{faction.Name}' is over the {limit} beacon limit for {beaconGroup.GroupName}. Please fix ASAP", Color.Red, "[Server]", 0, "Red");
                     }
 
-                    factionAlerts[key] = 0;
-                    continue;
                 }
 
-                factionAlerts[key]++;
+                factionAlert.SecondsSinceLastAlert = 0;
             }
 
             foreach (var key in playerAlerts.Keys)
